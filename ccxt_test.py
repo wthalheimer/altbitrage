@@ -39,17 +39,32 @@ gdax     = ccxt.gdax()     # 10 markets
 
 exchanges = [bittrex, kraken, poloniex, gdax, cex, bitstamp]
 
-# Load markets
-[exchange.load_markets() for exchange in exchanges]
+# Load markets and check if exchanges are working
+working_exchanges = []
+for exchange in exchanges:
+    # Try loading the markets, if you can, add it to the working exchanges list
+    try:
+        exchange.load_markets()
+        working_exchanges.append(exchange)
+    # If you cannot, say so, and dont add it to the list
+    except:
+        print('%s is down! Excluding %s'%(exchange.name, exchange.name))
+
+# Padding for printing out names
+pad = max([len(exchange.name) for exchange in working_exchanges])
 
 # Print how many markets are in each exchange
 print('Analyzing...')
-[print('%-10s: %i markets' %(exchange.name,len(exchange.markets)) ) for exchange in exchanges]
+[print('%-*s: %i markets' %(pad,exchange.name,len(exchange.markets)) ) for exchange in working_exchanges]
 print('')
 
 #_______________________________________________________________
 # Find which pairs are in common between exchanges with tether
-exchanges = [bittrex, kraken, poloniex]
+
+exchanges_with_tether = [bittrex, kraken, poloniex] # All the exchanges supporting tether
+
+# Make sure all the exchanges are working
+exchanges = [exchange for exchange in exchanges_with_tether if exchange in working_exchanges]
 
 markets = [exchange.markets for exchange in exchanges]
 pairs   = [[pair for pair in market.keys()] for market in markets]
@@ -63,6 +78,18 @@ for i in range(len(pairs)):
 # Find the common traded pairs between the exchanges
 common_pairs = set.intersection(*[set(list) for list in pairs])
 
+# A fetch ticker method that will handle USD/USDT naming
+def fetch_ticker(exchange, pair):
+    # If the pair ends with USD and the exchange uses USDT naming convention
+    if (pair[-3:] == 'USD') and (exchange.name in ['Poloniex', 'Bittrex']):
+        # Append T on the end of the ticker so it ends with USDT
+        return exchange.fetch_ticker(common_pair+'T')['last']
+    # Otherwise, just query the exchange per usual
+    else:
+        return exchange.fetch_ticker(common_pair)['last']
+
+
+
 # Loop over the in-common pairs and generate list of prices for those pairs
 # [ Pair1: [Exchange1_Price, Exchange2_Price, ...]
 #   Pair2: [Exchange1_Price, Exchange2_Price, ...]
@@ -73,32 +100,20 @@ for common_pair in common_pairs:
     specific_pair_prices = []
     # Loop over the exchanges
     for exchange in exchanges:
-        # Append the last price from the exchange ticker
-        # First try the pair as listed (might end with USD)
-        try:
-            specific_pair_prices.append( exchange.fetch_ticker(common_pair)['last'] )
-        # Didnt work because either connection was bad, or you tried accessing USDT with the name USD
-        except:
-            price = 0
-            while price == 0:
-                print('Trying to fetch ticker %s from %s'%(common_pair,exchange.name), end='...')
-                # Try it again in case of bad connection
-                try:
-                    price = exchange.fetch_ticker(common_pair)['last']
-                    specific_pair_prices.append( price )
-                    print('Success!')
-                except:
-                    # Try with 'T' appended
-                    try:
-                        print('with ''T'' appended''', end='...')
-                        price = exchange.fetch_ticker(common_pair+'T')['last']
-                        specific_pair_prices.append( price )
-                        print('Success!')
-                    except:
-                        print('Failed, trying again...')
-
+        price = 0
+        # Use a while loop to keep querying the exchange if the connection is bad
+        while price == 0:
+            print('Trying to fetch ticker %-9s from %-*s'%(common_pair,pad,exchange.name), end='...')
+            # Try it in case of bad connection
+            try:
+                price = fetch_ticker(exchange, common_pair)
+                specific_pair_prices.append( price )
+                print('Success!')
+            except:
+                print('Failed, trying again...')
 
     common_pair_prices.append(specific_pair_prices)
+print('')
 
 # Loop over the prices for the in-common pairs and generate list of dictionaries for price differentials
 # [ Pair1: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'}
@@ -127,34 +142,69 @@ for price_list, pair in zip(common_pair_prices, common_pairs):
         'pair'        : pair,
         'arbitrage'   : arbitrage,
         'min_exchange': min_exchange,
+        'min_price'   : min_price,
         'max_exchange': max_exchange,
+        'max_price'   : max_price,
     }
     arbitrage_opportunities.append(results)
 
-# Print top 3 arbitrage opportunities (use reverse=True to sort descending)
-sorted_arbitrage_opportunities = sorted(arbitrage_opportunities, key=lambda k: k['arbitrage'], reverse=True)
-[print(sorted_arbitrage_opportunities[i]) for i in range(N_pairs_with_tether)]
+# Sort best arbitrage opportunities (use reverse=True to sort descending)
+sorted_arb_opps = sorted(arbitrage_opportunities, key=lambda k: k['arbitrage'], reverse=True)
+
+# Print best N_pairs_with_tether arbitrage opportunities
+for i in range(N_pairs_with_tether):
+    print('%5.2f%% : %-12s : %-*s - Buy %-5s on %-*s for %.3e %-6s, sell %-6s on %-*s for %.3e %-5s (%.3e exchange rate)'
+          %( sorted_arb_opps[i]['arbitrage']*100., # Percent arbitrage available
+             sorted_arb_opps[i]['pair'],
+             2*pad-1,
+             sorted_arb_opps[i]['min_exchange'] + '/' + sorted_arb_opps[i]['max_exchange'],
+             sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
+             pad,
+             sorted_arb_opps[i]['min_exchange'],
+             sorted_arb_opps[i]['min_price'],
+             sorted_arb_opps[i]['pair'].split('/')[1], # The quote currency
+             sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
+             pad,
+             sorted_arb_opps[i]['max_exchange'],
+             sorted_arb_opps[i]['max_price']**(-1), # Inverse of the max price
+             sorted_arb_opps[i]['pair'].split('/')[1], # The quote currency
+             sorted_arb_opps[i]['max_price'] # Exchange rate at max exchange
+            ))
+
 
 #_______________________________________________________________
 # Find which pairs are in common between exchanges without tether
 #  -> this means fiat currencies cannot be part of the trade as you cannot transfer them to close arbitrage loop
 
-
 # Ranking of coins by transaction speed
 # You want to buy the faster coin first so you can send it to the other exchange
 # Basically, just avoid sending BTC at all costs...
 # 1. RaiBlocks (XRB)
-# 2. Ripple (XRP)
+# 2. Ripple (XRP) (On the order of seconds)
 # 3. Arkcoin (ARK)
 # 4. Nav Coin (NAV)
 # 5. NEM (XEM)
 # 6. Steem (STEEM)
 # 7. Stratis (STRAT)
-# 8. Monero (XMR)
-# 9. Litecoin (LTC)
+# 8. Monero (XMR) (4 mins for first confirmation, 26 mins for 10 confirmations)
+# 9. Litecoin (LTC) (10-30 minutes)
 # 10. Dash (DASH)
 # 11. Ethereum (ETH)
 coins_by_speed = ['XRB', 'XRP', 'ARK', 'NAV', 'XEM', 'STEEM', 'STRAT', 'XMR', 'LTC', 'DASH', 'ETH']
 
+# Exchanges sorted number of markets supported, most to least
+exchanges_without_tether = [cex, bitstamp, gdax]
+
+# Make sure all the exchanges are working
+exchanges_without_tether = [exchange for exchange in exchanges_without_tether if exchange in working_exchanges]
+
+# Loop over the echanges without tether, adding a new exchange to the exchange list on each iteration
+for exchange in exchanges_without_tether:
+
+    # Add next most inclusive exchange
+    exchanges = [bittrex, kraken, poloniex]
+
+    markets = [exchange.markets for exchange in exchanges]
+    pairs   = [[pair for pair in market.keys()] for market in markets]
 
 foo = 1
