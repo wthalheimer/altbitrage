@@ -284,7 +284,7 @@ for exchange in exchanges_without_tether:
 
     # Print best N_pairs_without_tether arbitrage opportunities
     for i in range(min(N_pairs_without_tether, len(sorted_arb_opps))):
-        print('%5.2f%% : %-8s : %-*s - Buy %-5s on %-*s for %.3e %-6s, sell %-6s on %-*s for %.3e %-5s'
+        print('%5.2f%% : %-8s : %-*s - Buy %-4s on %-*s for %.3e %-4s, sell %-4s on %-*s for %.3e %-4s'
               %( sorted_arb_opps[i]['arbitrage']*100., # Percent arbitrage available
                  sorted_arb_opps[i]['pair'],
                  2*pad,
@@ -302,4 +302,4 @@ for exchange in exchanges_without_tether:
                 ))
 
 
-foo = 1
+# Next step, do double trades, as in ETH->USD->BTC on Kraken, then BTC->USD->ETH on Bittrex (or something...)
