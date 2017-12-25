@@ -26,6 +26,7 @@ import ccxt
 # Code inputs:
 N_pairs_with_tether    = 10 # Number of pairs to print in exchanges possibly with tether
 N_pairs_without_tether = 10 # Number of pairs to print in exchanges without tether
+verbose                = False # Do not print market fetching status
 
 # Exchanges with tether (you can transfer USDT between exchanges)
 bittrex  = ccxt.bittrex()  # 266 markets
@@ -65,6 +66,9 @@ exchanges_with_tether = [bittrex, kraken, poloniex] # All the exchanges supporti
 
 # Make sure all the exchanges are working
 exchanges = [exchange for exchange in exchanges_with_tether if exchange in working_exchanges]
+print('Looking at exchanges:', end=' ')
+[print(exchange.name, end=', ') for exchange in exchanges]
+print('')
 
 markets = [exchange.markets for exchange in exchanges]
 pairs   = [[pair for pair in market.keys()] for market in markets]
@@ -94,7 +98,6 @@ def fetch_ticker(exchange, pair):
 # [ Pair1: [Exchange1_Price, Exchange2_Price, ...]
 #   Pair2: [Exchange1_Price, Exchange2_Price, ...]
 #   PairN: [Exchange1_Price, Exchange2_Price, ...] ]
-
 common_pair_prices = []
 for common_pair in common_pairs:
     specific_pair_prices = []
@@ -103,14 +106,14 @@ for common_pair in common_pairs:
         price = 0
         # Use a while loop to keep querying the exchange if the connection is bad
         while price == 0:
-            print('Trying to fetch ticker %-9s from %-*s'%(common_pair,pad,exchange.name), end='...')
+            if verbose: print('Trying to fetch ticker %-9s from %-8s'%(common_pair,exchange.name), end='...')
             # Try it in case of bad connection
             try:
                 price = fetch_ticker(exchange, common_pair)
                 specific_pair_prices.append( price )
-                print('Success!')
+                if verbose: print('Success!')
             except:
-                print('Failed, trying again...')
+                if verbose: print('Failed, trying again...')
 
     common_pair_prices.append(specific_pair_prices)
 print('')
@@ -119,7 +122,6 @@ print('')
 # [ Pair1: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'}
 #   Pair2: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'}
 #   PairN: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'} ]
-
 arbitrage_opportunities = []
 for price_list, pair in zip(common_pair_prices, common_pairs):
     # If the pair includes USD, name it USD(T) since we are technically dealing with tether
@@ -152,11 +154,11 @@ for price_list, pair in zip(common_pair_prices, common_pairs):
 sorted_arb_opps = sorted(arbitrage_opportunities, key=lambda k: k['arbitrage'], reverse=True)
 
 # Print best N_pairs_with_tether arbitrage opportunities
-for i in range(N_pairs_with_tether):
-    print('%5.2f%% : %-12s : %-*s - Buy %-5s on %-*s for %.3e %-6s, sell %-6s on %-*s for %.3e %-5s (%.3e exchange rate)'
+for i in range(min(N_pairs_with_tether, len(sorted_arb_opps))):
+    print('%5.2f%% : %-12s : %-*s - Buy %-5s on %-*s for %.3e %-6s, sell %-6s on %-*s for %.3e %-5s'
           %( sorted_arb_opps[i]['arbitrage']*100., # Percent arbitrage available
              sorted_arb_opps[i]['pair'],
-             2*pad-1,
+             2*pad,
              sorted_arb_opps[i]['min_exchange'] + '/' + sorted_arb_opps[i]['max_exchange'],
              sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
              pad,
@@ -166,9 +168,8 @@ for i in range(N_pairs_with_tether):
              sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
              pad,
              sorted_arb_opps[i]['max_exchange'],
-             sorted_arb_opps[i]['max_price']**(-1), # Inverse of the max price
+             sorted_arb_opps[i]['max_price'], # Exchange rate at max exchange
              sorted_arb_opps[i]['pair'].split('/')[1], # The quote currency
-             sorted_arb_opps[i]['max_price'] # Exchange rate at max exchange
             ))
 
 
@@ -200,11 +201,105 @@ exchanges_without_tether = [exchange for exchange in exchanges_without_tether if
 
 # Loop over the echanges without tether, adding a new exchange to the exchange list on each iteration
 for exchange in exchanges_without_tether:
+    print('\nAdding exchange: %s' %(exchange.name))
 
     # Add next most inclusive exchange
-    exchanges = [bittrex, kraken, poloniex]
+    exchanges.append(exchange)
 
     markets = [exchange.markets for exchange in exchanges]
     pairs   = [[pair for pair in market.keys()] for market in markets]
+
+    # Cannot quickly transfer fiat currencies between exchanges, so remove them
+    fiat_currencies = ['USD','EUR','GBP','RUB']
+    # Loop through the exchanges
+    for i in range(len(pairs)):
+        # Loop through the pairs traded on that exchange
+        j = 0
+        while j < len(pairs[i]):
+            # If the quote is in fiat currency, remove that market
+            if pairs[i][j][-3:] in fiat_currencies:
+                pairs[i].remove(pairs[i][j])
+            else:
+                # Increment counter
+                j += 1
+
+    # Find the common traded pairs between the exchanges
+    common_pairs = set.intersection(*[set(list) for list in pairs])
+
+    # Loop over the in-common pairs and generate list of prices for those pairs
+    # [ Pair1: [Exchange1_Price, Exchange2_Price, ...]
+    #   Pair2: [Exchange1_Price, Exchange2_Price, ...]
+    #   PairN: [Exchange1_Price, Exchange2_Price, ...] ]
+    common_pair_prices = []
+    for common_pair in common_pairs:
+        specific_pair_prices = []
+        # Loop over the exchanges
+        for exchange in exchanges:
+            price = 0
+            # Use a while loop to keep querying the exchange if the connection is bad
+            while price == 0:
+                if verbose: print('Trying to fetch ticker %-9s from %-8s'%(common_pair,exchange.name), end='...')
+                # Try it in case of bad connection
+                try:
+                    price = fetch_ticker(exchange, common_pair)
+                    specific_pair_prices.append( price )
+                    if verbose: print('Success!')
+                except:
+                    if verbose: print('Failed, trying again...')
+
+        common_pair_prices.append(specific_pair_prices)
+    print('')
+
+    # Loop over the prices for the in-common pairs and generate list of dictionaries for price differentials
+    # [ Pair1: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'}
+    #   Pair2: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'}
+    #   PairN: {'pair', 'arbitrage', 'min_exchange', 'max_exchange'} ]
+    arbitrage_opportunities = []
+    for price_list, pair in zip(common_pair_prices, common_pairs):
+
+        min_price = min(price_list)
+        max_price = max(price_list)
+
+        min_exchange_index = price_list.index(min_price)
+        max_exchange_index = price_list.index(max_price)
+
+        min_exchange = exchanges[min_exchange_index].name
+        max_exchange = exchanges[max_exchange_index].name
+
+        arbitrage = max_price/min_price - 1.
+
+        # Throw results into a dict and append to arbitrage_opportunities list
+        results = {
+            'pair'        : pair,
+            'arbitrage'   : arbitrage,
+            'min_exchange': min_exchange,
+            'min_price'   : min_price,
+            'max_exchange': max_exchange,
+            'max_price'   : max_price,
+        }
+        arbitrage_opportunities.append(results)
+
+    # Sort best arbitrage opportunities (use reverse=True to sort descending)
+    sorted_arb_opps = sorted(arbitrage_opportunities, key=lambda k: k['arbitrage'], reverse=True)
+
+    # Print best N_pairs_without_tether arbitrage opportunities
+    for i in range(min(N_pairs_without_tether, len(sorted_arb_opps))):
+        print('%5.2f%% : %-8s : %-*s - Buy %-5s on %-*s for %.3e %-6s, sell %-6s on %-*s for %.3e %-5s'
+              %( sorted_arb_opps[i]['arbitrage']*100., # Percent arbitrage available
+                 sorted_arb_opps[i]['pair'],
+                 2*pad,
+                 sorted_arb_opps[i]['min_exchange'] + '/' + sorted_arb_opps[i]['max_exchange'],
+                 sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
+                 pad,
+                 sorted_arb_opps[i]['min_exchange'],
+                 sorted_arb_opps[i]['min_price'],
+                 sorted_arb_opps[i]['pair'].split('/')[1], # The quote currency
+                 sorted_arb_opps[i]['pair'].split('/')[0], # The base currency
+                 pad,
+                 sorted_arb_opps[i]['max_exchange'],
+                 sorted_arb_opps[i]['max_price'], # Exchange rate at max exchange
+                 sorted_arb_opps[i]['pair'].split('/')[1], # The quote currency
+                ))
+
 
 foo = 1
