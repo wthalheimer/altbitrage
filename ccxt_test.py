@@ -30,6 +30,7 @@ verbose                = False # Do not print market fetching status
 
 # Exchanges with tether (you can transfer USDT between exchanges)
 bittrex  = ccxt.bittrex()  # 266 markets
+binance  = ccxt.binance()
 poloniex = ccxt.poloniex() # 99 markets
 kraken   = ccxt.kraken()   # 59 markets
 
@@ -38,7 +39,7 @@ cex      = ccxt.cex()      # 27 markets
 bitstamp = ccxt.bitstamp() # 15 markets
 gdax     = ccxt.gdax()     # 10 markets
 
-exchanges = [bittrex, kraken, poloniex, gdax, cex, bitstamp]
+exchanges = [bittrex, kraken, poloniex, gdax, cex, bitstamp, binance]
 
 # Load markets and check if exchanges are working
 working_exchanges = []
@@ -62,7 +63,7 @@ print('')
 #_______________________________________________________________
 # Find which pairs are in common between exchanges with tether
 
-exchanges_with_tether = [bittrex, kraken, poloniex] # All the exchanges supporting tether
+exchanges_with_tether = [bittrex, kraken, poloniex, binance] # All the exchanges supporting tether
 
 # Make sure all the exchanges are working
 exchanges = [exchange for exchange in exchanges_with_tether if exchange in working_exchanges]
@@ -303,3 +304,4 @@ for exchange in exchanges_without_tether:
 
 
 # Next step, do double trades, as in ETH->USD->BTC on Kraken, then BTC->USD->ETH on Bittrex (or something...)
+
